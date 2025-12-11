@@ -45,21 +45,19 @@ def create_settings_from_request(
 ) -> Settings:
     """Create Settings from request credentials, with fallback to environment variables."""
     from app.config import load_settings
-    import os
     
     # Try to load from environment as fallback
+    env_settings = None
     try:
         env_settings = load_settings()
-        final_openai_key = openai_api_key or env_settings.openai_api_key
-        final_base_url = ido_base_url or env_settings.erpnext_base_url
-        final_api_key = ido_api_key or env_settings.erpnext_api_key
-        final_api_secret = ido_api_secret or env_settings.erpnext_api_secret
     except ValueError:
-        # No environment variables set, use request values only
-        final_openai_key = openai_api_key
-        final_base_url = ido_base_url
-        final_api_key = ido_api_key
-        final_api_secret = ido_api_secret
+        pass  # No env settings, will use request values only
+    
+    # Use request values if provided, otherwise fallback to env
+    final_openai_key = openai_api_key or (env_settings.openai_api_key if env_settings else None)
+    final_base_url = ido_base_url or (env_settings.erpnext_base_url if env_settings else None)
+    final_api_key = ido_api_key or (env_settings.erpnext_api_key if env_settings else None)
+    final_api_secret = ido_api_secret or (env_settings.erpnext_api_secret if env_settings else None)
     
     # Validate that we have all required credentials
     missing = []
@@ -78,13 +76,20 @@ def create_settings_from_request(
             "Provide them in the request or set as environment variables."
         )
     
-    # Use default values for other settings
-    default_timeout = 15
-    default_max_records = 100
-    default_max_iterations = 10
-    default_filter_types = (
-        "Data", "Date", "Datetime", "DateTime", "Link", "Select", "Int", "Float"
-    )
+    # Use settings from env if available, otherwise use defaults
+    if env_settings:
+        default_timeout = env_settings.request_timeout
+        default_max_records = env_settings.max_records_limit
+        default_max_iterations = env_settings.max_iterations
+        default_filter_types = env_settings.filter_field_types
+    else:
+        # Use defaults if env settings not available
+        default_timeout = 120  # Increased from 15 to handle longer operations
+        default_max_records = 100
+        default_max_iterations = 10
+        default_filter_types = (
+            "Data", "Date", "Datetime", "DateTime", "Link", "Select", "Int", "Float"
+        )
     
     return Settings(
         openai_api_key=final_openai_key,
