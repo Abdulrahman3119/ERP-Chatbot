@@ -4,4 +4,5 @@ langchain
 langchain-openai
 requests
 pydantic
+python-dotenv
 

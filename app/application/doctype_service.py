@@ -1,13 +1,13 @@
 import json
 from typing import Dict, List, Optional, Sequence
 
-from app.infrastructure.erpnext_client import ERPNextClient
+from app.infrastructure.ido_client import IDOClient
 
 
 class DocTypeService:
     """Application service encapsulating DocType operations."""
 
-    def __init__(self, client: ERPNextClient, filter_field_types: Sequence[str]):
+    def __init__(self, client: IDOClient, filter_field_types: Sequence[str]):
         self.client = client
         self.filter_field_types = filter_field_types
 
@@ -34,12 +34,20 @@ class DocTypeService:
                 for field in fields
                 if field.get("fieldtype") in self.filter_field_types
             ]
+            
+            # Also identify date/datetime fields explicitly
+            date_fields = [
+                field.get("fieldname")
+                for field in fields
+                if field.get("fieldtype") in ["Date", "Datetime", "DateTime"]
+            ]
 
             return {
                 "exists": True,
                 "matched_doctype": doctype_name,
                 "all_fields": [field.get("fieldname") for field in fields],
                 "filter_fields": filter_fields[:10],
+                "date_fields": date_fields,  # Explicitly list date fields
             }
 
         close_matches = get_close_matches(name, doctypes_list, n=5, cutoff=0.4)
@@ -54,50 +62,115 @@ class DocTypeService:
         doctype: str,
         filter_fields: Optional[List[str]] = None,
         filters: Optional[List[List]] = None,
+        limit: Optional[int] = None,
     ) -> Dict:
-        """Fetch documents for a DocType, optionally applying filters."""
-        params = {"limit_page_length": 0}
+        """Fetch documents for a DocType, optionally applying filters.
+        
+        Args:
+            doctype: Name of the DocType
+            filter_fields: List of field names to include in response
+            filters: List of filters in format [[doctype, field, operator, value], ...]
+            limit: Maximum number of records to return (0 = no limit)
+        """
+        params = {}
+        
+        # Set limit (0 means no limit in IDO/ERPNext)
+        if limit is not None:
+            params["limit_page_length"] = limit
+        else:
+            params["limit_page_length"] = 0  # Default to no limit
+        
+        # Add field filtering
         if filter_fields:
-            params["fields"] = json.dumps(filter_fields)
+            # Validate and clean field names
+            valid_fields = [f for f in filter_fields if f]
+            if valid_fields:
+                params["fields"] = json.dumps(valid_fields)
+        
+        # Add filters - IDO/ERPNext expects filters as JSON array
         if filters:
-            params["filters"] = json.dumps(filters)
+            # Validate filter format
+            validated_filters = []
+            for filter_item in filters:
+                if isinstance(filter_item, list) and len(filter_item) >= 3:
+                    # Ensure filter has at least [doctype, field, operator, value]
+                    if len(filter_item) == 3:
+                        # If only 3 items, assume [field, operator, value] and prepend doctype
+                        validated_filters.append([doctype] + filter_item)
+                    elif len(filter_item) >= 4:
+                        # Full format [doctype, field, operator, value]
+                        validated_filters.append(filter_item[:4])
+            
+            if validated_filters:
+                params["filters"] = json.dumps(validated_filters)
+                # Debug: log the filters being sent (remove in production if needed)
+                import logging
+                logging.debug(f"Applying filters to {doctype}: {params['filters']}")
 
-        data = self.client.get(f"/api/resource/{doctype}", params)
-        documents = data.get("data", [])
+        try:
+            data = self.client.get(f"/api/resource/{doctype}", params)
+            documents = data.get("data", [])
 
-        return {
-            "doctype": doctype,
-            "count": len(documents),
-            "total_available": data.get("total_count", len(documents)),
-            "documents": documents,
-        }
+            return {
+                "doctype": doctype,
+                "count": len(documents),
+                "total_available": data.get("total_count", len(documents)),
+                "documents": documents,
+                "filters_applied": bool(filters),
+                "fields_requested": filter_fields,
+            }
+        except Exception as exc:
+            return {
+                "error": True,
+                "doctype": doctype,
+                "message": str(exc),
+                "count": 0,
+                "documents": [],
+            }
 
-    def fetch_doctype_with_filters(self, doctype_name: str) -> Dict:
-        """Analyze a DocType and fetch filtered data in one step."""
+    def fetch_doctype_with_filters(
+        self, 
+        doctype_name: str, 
+        filters: Optional[List[List]] = None,
+        filter_fields: Optional[List[str]] = None
+    ) -> Dict:
+        """Analyze a DocType and fetch filtered data in one step.
+        
+        Args:
+            doctype_name: Name of the DocType to fetch
+            filters: Optional list of filters in format [[doctype, field, operator, value], ...]
+            filter_fields: Optional list of fields to include in response
+        """
         analysis = self.analyze_doctype(doctype_name)
         if not analysis.get("exists"):
             return analysis
 
         matched_doctype = analysis["matched_doctype"]
-        filter_fields = analysis.get("filter_fields") or []
-        doctype_data = self.get_doctype_info(matched_doctype, filter_fields)
+        
+        # Use provided filter_fields or get from analysis
+        if filter_fields is None:
+            filter_fields = analysis.get("filter_fields") or []
+        
+        # Fetch data with proper server-side filtering
+        doctype_data = self.get_doctype_info(
+            matched_doctype, 
+            filter_fields=filter_fields if filter_fields else None,
+            filters=filters
+        )
 
         if doctype_data.get("error"):
             return doctype_data
 
-        filtered_data = doctype_data.get("documents", [])
-        applied_filter = None
-        if filter_fields and filtered_data:
-            first_filter = filter_fields[0]
-            filtered_data = [record for record in filtered_data if record.get(first_filter)]
-            applied_filter = first_filter
+        documents = doctype_data.get("documents", [])
 
         return {
             "doctype": matched_doctype,
             "total_records": doctype_data.get("count", 0),
-            "filtered_records": len(filtered_data),
-            "applied_filter": applied_filter,
-            "records": filtered_data[:20],
+            "total_available": doctype_data.get("total_available", 0),
+            "filtered_records": len(documents),
+            "applied_filters": filters if filters else None,
+            "filter_fields_used": filter_fields,
+            "records": documents[:100],  # Return more records, limit to 100
         }
 
 

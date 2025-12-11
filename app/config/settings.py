@@ -1,6 +1,13 @@
 import os
 from dataclasses import dataclass
 from typing import Tuple
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+# Look for .env in the project root (parent of app directory)
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 
 @dataclass(frozen=True)
@@ -17,6 +24,8 @@ class Settings:
     filter_field_types: Tuple[str, ...] = (
         "Data",
         "Date",
+        "Datetime",
+        "DateTime",
         "Link",
         "Select",
         "Int",
