@@ -18,7 +18,7 @@ class Settings:
     erpnext_base_url: str
     erpnext_api_key: str
     erpnext_api_secret: str
-    request_timeout: int = 15
+    request_timeout: int = 120
     max_records_limit: int = 100
     max_iterations: int = 10
     filter_field_types: Tuple[str, ...] = (
