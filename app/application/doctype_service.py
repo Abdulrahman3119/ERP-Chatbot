@@ -57,6 +57,167 @@ class DocTypeService:
             "suggestions": close_matches,
         }
 
+    def analyze_doctype_for_creation(self, name: str) -> Dict:
+        """Analyze DocType fields to identify required and optional fields for record creation.
+        
+        Returns detailed field information including:
+        - Required fields (mandatory)
+        - Optional fields
+        - Field types and constraints
+        - Default values
+        - Read-only fields (should be excluded)
+        """
+        analysis = self.analyze_doctype(name)
+        if not analysis.get("exists"):
+            return analysis
+        
+        doctype_name = analysis["matched_doctype"]
+        
+        # Get detailed field information
+        fields_data = self.client.get(
+            f"/api/resource/DocType/{doctype_name}",
+            params={"fields": json.dumps(["fields"])},
+        )
+        fields = fields_data.get("data", {}).get("fields", [])
+        
+        # Categorize fields
+        required_fields = []
+        optional_fields = []
+        read_only_fields = []
+        field_details = {}
+        
+        # Fields to exclude from creation (system fields)
+        excluded_fields = {
+            "name", "creation", "modified", "modified_by", "owner", 
+            "docstatus", "idx", "doctype", "parent", "parentfield", 
+            "parenttype", "amended_from"
+        }
+        
+        for field in fields:
+            fieldname = field.get("fieldname")
+            if not fieldname or fieldname in excluded_fields:
+                continue
+            
+            fieldtype = field.get("fieldtype", "")
+            reqd = field.get("reqd", 0)  # Required flag
+            read_only = field.get("read_only", 0)  # Read-only flag
+            default = field.get("default", None)
+            options = field.get("options", "")  # For Select fields
+            label = field.get("label", fieldname)
+            
+            field_info = {
+                "fieldname": fieldname,
+                "label": label,
+                "fieldtype": fieldtype,
+                "default": default,
+                "options": options if options else None,
+                "description": field.get("description", ""),
+            }
+            
+            field_details[fieldname] = field_info
+            
+            if read_only:
+                read_only_fields.append(fieldname)
+            elif reqd:
+                required_fields.append(fieldname)
+            else:
+                optional_fields.append(fieldname)
+        
+        return {
+            "exists": True,
+            "doctype": doctype_name,
+            "required_fields": required_fields,
+            "optional_fields": optional_fields,
+            "read_only_fields": read_only_fields,
+            "field_details": field_details,
+            "summary": {
+                "total_fields": len(field_details),
+                "required_count": len(required_fields),
+                "optional_count": len(optional_fields),
+                "read_only_count": len(read_only_fields),
+            }
+        }
+
+    def create_doctype_record(
+        self, 
+        doctype: str, 
+        data: Dict,
+        validate: bool = True
+    ) -> Dict:
+        """Create a new record in the specified DocType.
+        
+        Args:
+            doctype: Name of the DocType
+            data: Dictionary of field values for the new record
+            validate: Whether to validate required fields before creation
+            
+        Returns:
+            Dictionary with created record data or error information
+        """
+        try:
+            # Validate required fields if requested
+            if validate:
+                analysis = self.analyze_doctype_for_creation(doctype)
+                if not analysis.get("exists"):
+                    return {
+                        "error": True,
+                        "message": f"DocType '{doctype}' not found",
+                        "suggestions": analysis.get("suggestions", []),
+                    }
+                
+                required_fields = analysis.get("required_fields", [])
+                missing_fields = [
+                    field for field in required_fields 
+                    if field not in data or data.get(field) is None or data.get(field) == ""
+                ]
+                
+                if missing_fields:
+                    field_details = analysis.get("field_details", {})
+                    missing_info = [
+                        {
+                            "field": field,
+                            "label": field_details.get(field, {}).get("label", field),
+                            "type": field_details.get(field, {}).get("fieldtype", "Unknown"),
+                        }
+                        for field in missing_fields
+                    ]
+                    return {
+                        "error": True,
+                        "message": f"Missing required fields: {', '.join(missing_fields)}",
+                        "missing_fields": missing_info,
+                        "required_fields": required_fields,
+                    }
+            
+            # Create the record via POST request
+            endpoint = f"/api/resource/{doctype}"
+            response = self.client.post(endpoint, data=data)
+            
+            return {
+                "success": True,
+                "doctype": doctype,
+                "record": response.get("data", {}),
+                "name": response.get("data", {}).get("name"),
+                "message": f"Record created successfully in {doctype}",
+            }
+            
+        except Exception as exc:
+            error_msg = str(exc)
+            # Try to extract more detailed error from response if available
+            if hasattr(exc, 'response') and hasattr(exc.response, 'json'):
+                try:
+                    error_data = exc.response.json()
+                    error_msg = error_data.get("exc_type", error_msg)
+                    if "message" in error_data:
+                        error_msg = error_data["message"]
+                except:
+                    pass
+            
+            return {
+                "error": True,
+                "doctype": doctype,
+                "message": f"Failed to create record: {error_msg}",
+            }
+
     def get_doctype_info(
         self,
         doctype: str,

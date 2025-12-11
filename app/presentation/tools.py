@@ -35,6 +35,57 @@ def build_tools(service: DocTypeService, report_service: ReportService):
             return json.dumps({"error": True, "message": str(exc)}, ensure_ascii=False)
 
     @tool
+    def analyze_doctype_for_creation(name: str) -> str:
+        """Analyze a DocType to understand required and optional fields for creating new records.
+        
+        Use this BEFORE creating a new record to understand:
+        - Which fields are required (must be provided)
+        - Which fields are optional
+        - Field types and constraints
+        - Default values
+        
+        Returns detailed field information to guide record creation.
+        """
+        try:
+            result = service.analyze_doctype_for_creation(name)
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            return json.dumps({"error": True, "message": str(exc)}, ensure_ascii=False)
+
+    @tool
+    def create_doctype_record(doctype: str, data: str, validate: bool = True) -> str:
+        """Create a new record in a DocType.
+        
+        IMPORTANT WORKFLOW:
+        1. FIRST call analyze_doctype_for_creation(doctype) to understand required fields
+        2. Collect all required field values from the user
+        3. Optionally collect optional field values
+        4. Call this function with the data as a JSON string
+        
+        Args:
+            doctype: Name of the DocType (e.g., "Cleaning Work Order")
+            data: JSON string containing field values (e.g., '{"customer": "ABC Corp", "date": "2024-01-15"}')
+            validate: Whether to validate required fields (default: True)
+        
+        Returns:
+            JSON string with created record information or error details
+        """
+        try:
+            data_dict = json.loads(data) if isinstance(data, str) else data
+            result = service.create_doctype_record(doctype, data_dict, validate=validate)
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        except json.JSONDecodeError as exc:
+            return json.dumps({
+                "error": True,
+                "message": f"Invalid JSON in data parameter: {str(exc)}",
+            }, ensure_ascii=False)
+        except Exception as exc:
+            return json.dumps({
+                "error": True,
+                "message": str(exc),
+            }, ensure_ascii=False)
+
+    @tool
     def get_doctype_info(
         doctype: str, 
         filter_fields: str = None, 
@@ -257,8 +308,10 @@ def build_tools(service: DocTypeService, report_service: ReportService):
 
     return [
         analyze_doctype,
+        analyze_doctype_for_creation,
         get_doctype_info,
         fetch_doctype_with_filters,
+        create_doctype_record,
         generate_report,
         get_current_time,
         build_date_filter,
