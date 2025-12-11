@@ -34,31 +34,28 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    """Load settings from environment variables with basic validation."""
+    """Load settings from environment variables (optional - can be overridden by request).
+    
+    Returns Settings with environment variable values, or raises ValueError if none are set.
+    This is used as a fallback when credentials are not provided in the request.
+    """
     openai_api_key = os.getenv("OPENAI_API_KEY")
     erpnext_base_url = os.getenv("ERPNEXT_BASE_URL")
     erpnext_api_key = os.getenv("ERPNEXT_API_KEY")
     erpnext_api_secret = os.getenv("ERPNEXT_API_SECRET")
 
-    missing = [
-        name
-        for name, value in {
-            "OPENAI_API_KEY": openai_api_key,
-            "ERPNEXT_BASE_URL": erpnext_base_url,
-            "ERPNEXT_API_KEY": erpnext_api_key,
-            "ERPNEXT_API_SECRET": erpnext_api_secret,
-        }.items()
-        if not value
-    ]
-    if missing:
+    # If no environment variables are set, raise error
+    # (credentials must come from request or env)
+    if not any([openai_api_key, erpnext_base_url, erpnext_api_key, erpnext_api_secret]):
         raise ValueError(
-            f"Missing required environment variables: {', '.join(missing)}"
+            "No credentials provided. Either set environment variables or provide credentials in the request."
         )
 
+    # Use empty strings as defaults if not set (will be overridden by request if provided)
     return Settings(
-        openai_api_key=openai_api_key,
-        erpnext_base_url=erpnext_base_url,
-        erpnext_api_key=erpnext_api_key,
-        erpnext_api_secret=erpnext_api_secret,
+        openai_api_key=openai_api_key or "",
+        erpnext_base_url=erpnext_base_url or "",
+        erpnext_api_key=erpnext_api_key or "",
+        erpnext_api_secret=erpnext_api_secret or "",
     )
 
